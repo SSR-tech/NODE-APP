@@ -1,8 +1,54 @@
 const Tour = require('../Models/tourModel');
 
+exports.aliasTopTours = (req, res, next) => {
+  req.query.limit = '-5';
+  req.query.sort = '-ratingsAverage,price';
+  req.query.fields = 'name,price,ratingsAverage,summary,difficulty';
+  next();
+};
+
 exports.getAllTours = async (req, res) => {
   try {
-    const tours = await Tour.find();
+    // To avoid filtering the excludedFields so that those fields can be implementd simultaneously without affecting the filters.
+    const queryObj = { ...req.query };
+    const excludeFields = ['page', 'sort', 'limit', 'fields'];
+    excludeFields.forEach(el => delete queryObj[el]);
+
+    // 1) FILTERING
+    let queryStr = JSON.stringify(queryObj);
+    queryStr = queryStr.replace(/\b(gt|gte|lt|lte)\b/g, match => `$${match}`);
+
+    let query = Tour.find(JSON.parse(queryStr));
+
+    // 2) SORTING
+    if (req.query.sort) {
+      const sortBy = req.query.sort.split(',').join(' ');
+      query = query.sort(sortBy);
+    } else {
+      query = query.sort('-createdAt');
+    }
+
+    // 3) FIELD LIMITING
+    if (req.query.fields) {
+      const fields = req.query.fields.split(',').join(' ');
+      query = query.select(fields);
+    } else {
+      query = query.select('-__v');
+    }
+
+    // 4) PAGINATION
+    const page = req.query.page * 1 || 1;
+    const limit = req.query.limit * 1 || 100;
+    const skip = (page - 1) * limit;
+
+    query = query.skip(skip).limit(limit);
+
+    if (req.query.page) {
+      const numTours = await Tour.countDocuments();
+      if (skip > numTours) throw new Error('This page does not exist');
+    }
+
+    const tours = await query;
 
     res.status(200).json({
       status: 'Success',
@@ -59,8 +105,8 @@ exports.createTour = async (req, res) => {
 exports.updateTour = async (req, res) => {
   try {
     const tour = await Tour.findByIdAndUpdate(req.params.id, req.body, {
-      new: true, // this will send the new updated document to the client
-      runValidators: true // Validates if the newly entered data are same as the schema model
+      new: true, // this will send the newly updated document to the client
+      runValidators: true // Validates if the newly entered data are same as the schema.
     });
 
     res.status(200).json({
